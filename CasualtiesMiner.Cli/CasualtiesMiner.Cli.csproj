@@ -12,6 +12,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\CasualtiesMiner.Dumper\CasualtiesMiner.Dumper.csproj" />
+        <ProjectReference Include="..\CasualtiesMiner.Uploader\CasualtiesMiner.Uploader.csproj" />
     </ItemGroup>
 
     <!-- Copy ze files -->

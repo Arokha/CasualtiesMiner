@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <OutputType>Exe</OutputType>
+        <OutputType>Library</OutputType>
         <RootNamespace>CasualtiesMiner.Uploader</RootNamespace>
     </PropertyGroup>
 
@@ -13,5 +13,9 @@
     <ItemGroup>
         <EmbeddedResource Include="BucketSchemas/*.json" 
                           LogicalName="BucketSchemas/%(Filename)%(Extension)"/>
+    </ItemGroup>
+    
+    <ItemGroup>
+      <Folder Include="Properties\" />
     </ItemGroup>
 </Project>

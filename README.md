@@ -10,8 +10,8 @@ The suite is split into multiple .NET projects:
 - CasualtiesMiner.Generators, a C# source generator that creates DTOs from game classes and strips them of Unity types
 - CasualtiesMiner.Shared, a C# library holding generated DTOs and code reused between the projects
 - CasualtiesMiner.Dumper, a C# library that dumps data from the game prefabs and the game's .NET assembly
-- CasualtiesMiner.Dumper.Cli, a CLI frontend for the dumper library
-- CasualtiesMiner.Uploader, a CLI application that uploads dumped data to MediaWiki through Bucket tables and Lua data modules 
+- CasualtiesMiner.Uploader, a C# library that uploads dumped data to MediaWiki through Bucket tables and Lua data modules
+- CasualtiesMiner.Cli, a CLI frontend for the tool
 
 ## CasualtiesMiner.Generators
 
@@ -34,28 +34,9 @@ The data dumper does two things:
 
 Currently, the parsing of data from delegates like `OnUse`, `LimbUse`, etc. is not implemented yet.
 
-## CasualtiesMiner.Dumper.Cli
-
-The Cli frontend takes a single parameter: the path to `Assembly-CSharp.dll`, or alternatively the game's installation
-directory.
-
-The resulting extracted data is written to `data.json`, next to the CLI executable.
-
-### Usage
-
-Windows
-```
-.\CasualtiesMiner.Dumper.Cli.exe path\to\Assembly-CSharp.dll
-```
-
-macOS / Linux
-```
-./CasualtiesMiner.Dumper.Cli path/to/Assembly-CSharp.dll
-```
-
 ## CasualtiesMiner.Uploader
 
-The uploader CLI sends the dumped item data to MediaWiki in the form of 
+The uploader library sends the dumped item data to MediaWiki in the form of 
 [Bucket](https://meta.weirdgloop.org/w/Extension:Bucket) tables and Lua data modules. The wiki must have the Bucket and
 Scribunto extensions installed (which is the case for the [Miraheze wiki](https://casualtiesunknown.miraheze.org)).
 
@@ -82,7 +63,7 @@ The uploader creates and uploads a Bucket schema for each type of extracted data
 The uploader also creates a trigger page (like `Project:Item data`) and Lua data module (like `Module:Item/data`)
 for the purpose of inserting the extracted data into the Bucket tables.
 
-### Localization (i18n)
+#### Localization (i18n)
 
 Game locale files (`CasualtiesUnknown_Data/Lang/EN.json`, community translations, etc.) are uploaded as Scribunto
 modules that are logically grouped under the `Module:Locale` parent module:
@@ -99,54 +80,63 @@ modules that are logically grouped under the `Module:Locale` parent module:
 - `Module:Locale/EN/ui`, … — infobox labels and category names.
 - `Module:Locale/WikiUi` — wiki-only labels for moodle cause expressions (`body.*` → readable names).
 
-Upload all languages from a directory:
+Locale JSON files come from the game (`<game>/CU_Data/Lang/`) or the
+[community locale repository](https://github.com/Orsoniks/scavgame-locale).
 
+## CasualtiesMiner.Cli
+
+The frontend tool provides two commands: `extract` and `upload`.
+
+### Extract
+
+The extract command takes the path to `Assembly-CSharp.dll`, or alternatively the game's installation
+directory.
+
+The resulting extracted data is written to `data.json`, next to the CLI executable. Alternatively, if a path is provided
+as a second parameter, it is written to that path instead.
+
+Usage:
+```sh
+./CasualtiesMiner.Cli extract path/to/Assembly-CSharp.dll
 ```
-CasualtiesMiner.Uploader locales --locale-dir "E:\AssetRipper\...\Assets\Lang"
+
+### Upload
+
+The upload command uploads all of the data to Mediawiki in the form of Lua data modules and trigger pages. 
+
+The command either takes an existing data files as extracted by the extract command, or runs the extraction process
+beforehand.
+
+Preview without editing (no login needed):
+```sh
+./CasualtiesMiner.Cli upload all --dry-run --data data.json --assembly-path path/to/assembly
 ```
 
-Or a single file: `--locale EN.json`. Fallback language: `--default-locale EN`.
+Upload data to Mediawiki (bot credentials via Special:BotPasswords):
+```sh
+./CasualtiesMiner.Cli upload all --user "Bot@uploader" --password "<botpassword>" --assembly-path path/to/assembly
+```
 
-### Upload modes
+Use an existing data file instead of the game assembly:
+```sh
+./CasualtiesMiner.Cli upload all --data path/to/data.json --dry-run --data data.json --assembly-path path/to/assembly
+```
+
+Credentials may also be provided via the `CU_WIKI_USER` / `CU_WIKI_PASSWORD` environment variables.
+
+#### Upload modes
 
 Bucket can only be written through `bucket.put` calls executed while a page is parsed, so the uploader
 is a bot that edits pages which trigger those calls.
 
-- **`schemas`** — upload `Bucket:*` table definitions (run once or after schema changes).
+- **`table_schema`** — upload `Bucket:*` table definitions (run once or after schema changes).
 - **`locales`** — upload `Module:Locale` and per-language item/UI modules.
-- **`bulk`** — upload locales, `Module:ItemBucket`, `Module:Item/data`, `Module:Liquid/data`, and refresh Bucket via trigger pages.
-- **`all`** — `schemas`, then `bulk`.
-
-The uploader does **not** create item article pages. Add `{{#invoke:ItemBucket|infobox|item_id}}` to pages yourself.
-
-### Item pages on the wiki
-
-After `bulk` has populated Bucket, any page can render the full infobox with one line:
-
-```wikitext
-{{#invoke:ItemBucket|infobox|shotgun}}
-```
-
-Stats come from Bucket; name and description from `Module:Locale`. Your existing `Template:Item Infobox` styling is unchanged.
-
-### Usage
-
-```
-# Preview without editing (no login needed):
-CasualtiesMiner.Uploader bulk --dry-run --data data.json --locale-dir path/to/Lang
-
-# Live run (bot credentials via Special:BotPasswords):
-CasualtiesMiner.Uploader all --user "Bot@uploader" --password "<botpassword>" \
-    --data data.json --locale-dir path/to/Lang
-```
-
-Locale JSON files come from the game (`<game>/CU_Data/Lang/`) or the
-[community locale repository](https://github.com/Orsoniks/scavgame-locale).
-Credentials may also be provided via the `CU_WIKI_USER` / `CU_WIKI_PASSWORD` environment variables.
+- **`table_data`** — upload `Module:*/data`, and refresh Bucket via trigger pages (`Project:* Data`).
+- **`all`** — uploads all of the above in the following order: `table_schema`, `locales`, and `table_data`.
 
 ### Notes / prerequisites
 
 - Create a bot account at `Special:BotPasswords` with the *Edit existing/new pages* grants.
-- Bulk refresh edits `Project:Items data` and `Project:Liquid data` (defined in `WikiContent`); the uploader creates them on first run if missing.
+- Table data uploads also refresh `Project:* data` trigger articles. The uploader creates them on first run if missing.
 - The dumper currently emits a placeholder for `tags` (the `//TEMP` line in `Dumper.cs`), so the `tags`
   column will be empty until that field stores the raw tag string; the uploader handles this gracefully.

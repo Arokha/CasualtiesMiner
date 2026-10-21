@@ -9,10 +9,8 @@ using CasualtiesMiner.Uploader.Wiki;
 
 namespace CasualtiesMiner.Uploader;
 
-public static class Program
+public static class WikiUpload
 {
-    public static readonly string DryRunFolder = Path.Combine("dry-run-output");
-
     public record EditRequest(
         string Title,
         string Contents,
@@ -20,25 +18,8 @@ public static class Program
         string? ForceUploadIfPageChanged = null,
         string? Group = null);
 
-    public static async Task<int> Main(string[] args)
+    public static async Task<bool> Upload(UploadOptions options)
     {
-        if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
-        {
-            PrintUsage();
-            return 0;
-        }
-
-        var mode = args[0].ToLowerInvariant();
-        var options = CliOptions.Parse(args);
-
-        if (mode is not ("schemas" or "locales" or "bulk" or "all"))
-        {
-            Console.Error.WriteLine($"Unknown mode '{mode}'.");
-            PrintUsage();
-
-            return 1;
-        }
-
         var dataRows = await LoadDumpedData(options);
         var locales = await LoadLocalesAsync(options);
 
@@ -57,7 +38,7 @@ public static class Program
             {
                 Console.Error.WriteLine(
                     "Credentials required for a live run. Pass --user/--password or set CU_WIKI_USER/CU_WIKI_PASSWORD, or use --dry-run.");
-                return 1;
+                return false;
             }
 
             Console.WriteLine($"Logging in to {options.ApiUrl} as {options.User} ...");
@@ -66,26 +47,26 @@ public static class Program
         }
         else
         {
-            if (Directory.Exists(DryRunFolder))
-                Directory.Delete(DryRunFolder, true);
-            Directory.CreateDirectory(DryRunFolder);
+            if (Directory.Exists(options.DryRunOutput))
+                Directory.Delete(options.DryRunOutput, true);
+            Directory.CreateDirectory(options.DryRunOutput);
 
             Console.WriteLine("Dry run: no edits will be performed.");
         }
 
         List<EditRequest> edits = [];
 
-        if (mode is "schemas" or "all")
+        if (options.Mode is "table_schema" or "all")
         {
             edits.AddRange(UploadSchemasAsync());
         }
 
-        if (mode is "locales" or "all")
+        if (options.Mode is "locales" or "all")
         {
             edits.AddRange(UploadLocalesAsync(locales, dataRows));
         }
 
-        if (mode is "bulk" or "all")
+        if (options.Mode is "table_data" or "all")
         {
             edits.AddRange(UploadBulkAsync(dataRows));
         }
@@ -112,14 +93,13 @@ public static class Program
                     edit.Title,
                     edit.Contents,
                     edit.EditMessage,
-                    options.DryRun,
+                    options.DryRun ? options.DryRunOutput : null,
                     forceUpload: forceUpload);
                 Console.WriteLine($"  {edit.Title.PadRight(preferredLogWidth, ' ')} {status}{(forceUpload ? " (force upload)" : "")}");
             }
         }
 
-        Console.WriteLine("Done.");
-        return 0;
+        return true;
     }
 
     private static IEnumerable<EditRequest> UploadSchemasAsync()
@@ -241,7 +221,7 @@ public static class Program
             ForceUploadIfPageChanged: dataModuleTitle, Group: "Bucket data");
     }
 
-    private static async Task<DataRows> LoadDumpedData(CliOptions options)
+    private static async Task<DataRows> LoadDumpedData(UploadOptions options)
     {
         var data = await File.ReadAllTextAsync(options.DataPath);
 
@@ -294,7 +274,7 @@ public static class Program
         };
     }
 
-    private static async Task<LocaleCatalog> LoadLocalesAsync(CliOptions options)
+    private static async Task<LocaleCatalog> LoadLocalesAsync(UploadOptions options)
     {
         var catalog = await LocaleCatalog.LoadAsync(
             options.LocaleDir,
@@ -308,73 +288,19 @@ public static class Program
         return catalog;
     }
 
-    private static void PrintUsage()
+    public sealed class UploadOptions
     {
-        Console.WriteLine(
-            """
-            CasualtiesMiner.Uploader - uploads dumped item data to a Bucket-enabled MediaWiki.
-
-            Usage:
-              uploader <mode> [options]
-
-            Modes:
-              schemas    Upload Bucket table definitions (Bucket:* pages).
-              locales    Upload Module:Locale and Module:Locale/<lang>/* from game JSON files.
-              bulk       Upload locales, Bucket modules, Module:*/data, and refresh Bucket (items, liquids, moodles).
-              all        schemas, then bulk (locales + modules + Bucket data).
-
-            Options:
-              --api <url>              api.php endpoint (default: casualtiesunknown.miraheze.org)
-              --user / --password      Bot credentials (or CU_WIKI_USER / CU_WIKI_PASSWORD env vars).
-              --data <path>            Path to data.json (default: data.json).
-              --locale-dir <path>      Folder with game locale JSON (only files with a "main" object).
-              --locale <path>          Single locale file (e.g. ru-RU.json); if omitted, only EN is fetched remotely.
-              --locale-tag <git-ref>   Git ref for orsoniks/scavgame-locale (default: v6.1; "6.1" → v6.1).
-              GitHub overrides local only for the same file name (ru-RU.json).
-              --default-locale <code>  Locale id = JSON stem (default: EN → EN.json).
-              --request-delay-ms <n> Pause after each API call (default: 750).
-              --dry-run                Preview changes without logging in or editing.
-            """);
-    }
-
-    private sealed class CliOptions
-    {
-        public string ApiUrl { get; private init; } = "https://casualtiesunknown.miraheze.org/w/api.php";
-        public string? User { get; private init; }
-        public string? Password { get; private init; }
-        public string DataPath { get; private init; } = "data.json";
-        public string? LocaleDir { get; private init; }
-        public string LocalePath { get; private init; } = "EN.json";
-        public string DefaultLocale { get; private init; } = LocaleCatalog.DefaultLanguageCode;
-        public string LocaleTag { get; private init; } = LocaleCatalog.DefaultRemoteTag;
-        public TimeSpan RequestDelay { get; private init; } = TimeSpan.FromMilliseconds(750);
-        public bool DryRun { get; private init; }
-
-        public static CliOptions Parse(string[] args)
-        {
-            string? Get(string name)
-            {
-                var index = Array.IndexOf(args, name);
-                return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
-            }
-
-            var delayRaw = Get("--request-delay-ms");
-
-            return new CliOptions
-            {
-                ApiUrl = Get("--api") ?? "https://casualtiesunknown.miraheze.org/w/api.php",
-                User = Get("--user") ?? Environment.GetEnvironmentVariable("CU_WIKI_USER"),
-                Password = Get("--password") ?? Environment.GetEnvironmentVariable("CU_WIKI_PASSWORD"),
-                DataPath = Get("--data") ?? "data.json",
-                LocaleDir = Get("--locale-dir"),
-                LocalePath = Get("--locale") ?? "EN.json",
-                DefaultLocale = Get("--default-locale") ?? LocaleCatalog.DefaultLanguageCode,
-                LocaleTag = Get("--locale-tag") ?? LocaleCatalog.DefaultRemoteTag,
-                RequestDelay = int.TryParse(delayRaw, out var delayMs)
-                    ? TimeSpan.FromMilliseconds(delayMs)
-                    : TimeSpan.FromMilliseconds(750),
-                DryRun = args.Contains("--dry-run")
-            };
-        }
+        public string Mode { get; init; } = "all";
+        public string ApiUrl { get; init; } = "https://casualtiesunknown.miraheze.org/w/api.php";
+        public string? User { get; init; }
+        public string? Password { get; init; }
+        public string DataPath { get; init; } = "data.json";
+        public string? LocaleDir { get; init; }
+        public string LocalePath { get; init; } = "EN.json";
+        public string DefaultLocale { get; init; } = LocaleCatalog.DefaultLanguageCode;
+        public string LocaleTag { get; init; } = LocaleCatalog.DefaultRemoteTag;
+        public TimeSpan RequestDelay { get; init; } = TimeSpan.FromMilliseconds(750);
+        public bool DryRun { get; init; }
+        public string DryRunOutput { get; init; } = "dry-run-output";
     }
 }

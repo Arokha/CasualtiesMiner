@@ -69,7 +69,7 @@ internal sealed class MediaWikiClient : IDisposable
     /// Creates or replaces a page. Skips the write when the revision SHA1 already matches.
     /// Returns the resulting edit status (<c>"nochange"</c>, <c>"Success"</c>, or <c>"dry-run"</c>).
     /// </summary>
-    public async Task<string> EditAsync(string title, string text, string summary, bool dryRun = false, bool forceUpload = false)
+    public async Task<string> EditAsync(string title, string text, string summary, string? dryRunFolder = null, bool forceUpload = false)
     {
         if (title.StartsWith("Bucket:"))
             text = GetFormattedBucketSchema(text);
@@ -79,10 +79,10 @@ internal sealed class MediaWikiClient : IDisposable
         var localSha1 = ComputeSha1(text);
         var remoteSha1 = _cachedPageHashes.TryGetValue(title, out var sha) ? sha : (await GetPageHashesAsync([title])).First().Hash;
 
-        if (dryRun)
+        if (dryRunFolder != null)
         {
             var sanitizedTitle = Path.GetInvalidFileNameChars().Aggregate(title, (current, ch) => current.Replace(ch, '_'));
-            var dryRunPath = Path.Combine(Program.DryRunFolder, sanitizedTitle + ".txt");
+            var dryRunPath = Path.Combine(dryRunFolder, sanitizedTitle + ".txt");
             await using var writer = new StreamWriter(File.OpenWrite(dryRunPath));
             await writer.WriteAsync(text);
         }
@@ -90,7 +90,7 @@ internal sealed class MediaWikiClient : IDisposable
         if (string.Equals(localSha1, remoteSha1, StringComparison.OrdinalIgnoreCase) && !forceUpload)
             return NoChange;
         
-        if (dryRun)
+        if (dryRunFolder != null)
             return DryRun;
 
         if (_csrfToken is null)
